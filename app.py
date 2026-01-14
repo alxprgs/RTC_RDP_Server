@@ -6,7 +6,14 @@ import logging
 import uuid
 import contextvars
 from contextlib import asynccontextmanager
-from typing import Any, Callable, Optional, Literal, List, Sequence
+from typing import Any, Callable, Optional, Literal, List, Sequence, Dict
+import shutil
+import socket
+import platform
+import subprocess
+from datetime import datetime, timezone
+import psutil
+import json
 
 import serial
 from serial.tools import list_ports
@@ -38,6 +45,10 @@ WS_PING_TIMEOUT = float(os.getenv("WS_PING_TIMEOUT", "15"))
 WS_MAX_RATE_HZ = float(os.getenv("WS_MAX_RATE_HZ", "30"))
 WS_STOP_ON_CLOSE = os.getenv("WS_STOP_ON_CLOSE", "1") == "1"
 
+CPU_PERCENT_INTERVAL = float(os.getenv("CPU_PERCENT_INTERVAL", "0.10"))
+STREAM_INTERVAL = float(os.getenv("STREAM_INTERVAL", "1.0"))
+
+
 ARDUINO_BAUD = int(os.getenv("ARDUINO_BAUD", "115200"))
 
 REQUEST_ID: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
@@ -49,12 +60,15 @@ SERIAL_LOG_ENV = os.getenv("SERIAL_LOG")
 MAX_BODY_PREVIEW_ENV = os.getenv("MAX_BODY_PREVIEW")
 SERIAL_MAX_PREVIEW_ENV = os.getenv("SERIAL_MAX_PREVIEW")
 
-
 def _normalize_log_profile(v: Optional[str]) -> Optional[str]:
     if not v:
         return None
     v = v.strip().upper().replace("-", "_")
     return v or None
+
+async def asyncio_sleep(sec: float):
+    import asyncio
+    await asyncio.sleep(sec)
 
 
 LOG_PROFILES: dict[str, dict[str, Any]] = {
@@ -99,6 +113,305 @@ LOG_PROFILES: dict[str, dict[str, Any]] = {
         "serial_max_preview": 200,
     },
 }
+
+def _read_text(path: str) -> Optional[str]:
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            return f.read().strip()
+    except Exception:
+        return None
+
+
+def _run_cmd(cmd: List[str]) -> Optional[str]:
+    try:
+        out = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT).strip()
+        return out
+    except Exception:
+        return None
+
+
+def _is_raspberry_pi() -> bool:
+    model = _read_text("/proc/device-tree/model")
+    if model and "Raspberry Pi" in model:
+        return True
+    return os.path.exists("/sys/firmware/devicetree/base/model")
+
+
+def _bytes(n: Optional[int]) -> Optional[Dict[str, Any]]:
+    if n is None:
+        return None
+    return {"bytes": int(n)}
+
+
+def _get_ip_addresses() -> Dict[str, List[str]]:
+    ips: Dict[str, List[str]] = {}
+    try:
+        addrs = psutil.net_if_addrs()
+        for iface, items in addrs.items():
+            iface_ips = []
+            for a in items:
+                if getattr(a, "family", None) in (socket.AF_INET, socket.AF_INET6):
+                    iface_ips.append(a.address)
+            if iface_ips:
+                ips[iface] = iface_ips
+    except Exception:
+        pass
+    return ips
+
+def get_system_snapshot(
+    include_disk: bool = True,
+    include_network: bool = True,
+    include_sensors: bool = True,
+) -> Dict[str, Any]:
+    now = datetime.now(timezone.utc).isoformat()
+
+    system = platform.system().lower()
+    is_linux = system == "linux"
+    is_windows = system == "windows"
+    is_rpi = is_linux and _is_raspberry_pi()
+
+    info: Dict[str, Any] = {
+        "ts_utc": now,
+        "platform": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "version": platform.version(),
+            "machine": platform.machine(),
+            "architecture": platform.architecture()[0],
+            "python": sys.version.split()[0],
+            "hostname": platform.node(),
+            "is_windows": is_windows,
+            "is_linux": is_linux,
+            "is_raspberry_pi": is_rpi,
+        },
+    }
+
+    if is_rpi:
+        info["platform"]["rpi_model"] = (
+            _read_text("/proc/device-tree/model")
+            or _read_text("/sys/firmware/devicetree/base/model")
+        )
+
+    # uptime
+    try:
+        boot = psutil.boot_time()
+        info["uptime"] = {
+            "boot_time_utc": datetime.fromtimestamp(boot, tz=timezone.utc).isoformat(),
+            "seconds": int(time.time() - boot),
+        }
+    except Exception:
+        info["uptime"] = None
+
+    # CPU
+    try:
+        cpu_freq = psutil.cpu_freq()
+        info["cpu"] = {
+            "physical_cores": psutil.cpu_count(logical=False),
+            "logical_cores": psutil.cpu_count(logical=True),
+            "percent_total": psutil.cpu_percent(interval=CPU_PERCENT_INTERVAL),
+            "percent_per_core": psutil.cpu_percent(interval=0.0, percpu=True),
+            "freq_mhz": {
+                "current": cpu_freq.current if cpu_freq else None,
+                "min": cpu_freq.min if cpu_freq else None,
+                "max": cpu_freq.max if cpu_freq else None,
+            },
+        }
+        if is_linux:
+            try:
+                la = os.getloadavg()
+                info["cpu"]["loadavg"] = {"1m": la[0], "5m": la[1], "15m": la[2]}
+            except Exception:
+                info["cpu"]["loadavg"] = None
+    except Exception:
+        info["cpu"] = None
+
+    # RAM / Swap
+    try:
+        vm = psutil.virtual_memory()
+        sm = psutil.swap_memory()
+        info["memory"] = {
+            "ram": {
+                "total": _bytes(vm.total),
+                "available": _bytes(vm.available),
+                "used": _bytes(vm.used),
+                "percent": vm.percent,
+            },
+            "swap": {
+                "total": _bytes(sm.total),
+                "used": _bytes(sm.used),
+                "free": _bytes(sm.free),
+                "percent": sm.percent,
+            },
+        }
+    except Exception:
+        info["memory"] = None
+
+    # Disk (optional)
+    if include_disk:
+        try:
+            parts = []
+            for p in psutil.disk_partitions(all=False):
+                try:
+                    usage = psutil.disk_usage(p.mountpoint)
+                except Exception:
+                    usage = None
+                parts.append(
+                    {
+                        "device": p.device,
+                        "mountpoint": p.mountpoint,
+                        "fstype": p.fstype,
+                        "opts": p.opts,
+                        "usage": None
+                        if usage is None
+                        else {
+                            "total": _bytes(usage.total),
+                            "used": _bytes(usage.used),
+                            "free": _bytes(usage.free),
+                            "percent": usage.percent,
+                        },
+                    }
+                )
+
+            io = psutil.disk_io_counters()
+            info["disk"] = {
+                "partitions": parts,
+                "io": None
+                if not io
+                else {
+                    "read_bytes": _bytes(io.read_bytes),
+                    "write_bytes": _bytes(io.write_bytes),
+                    "read_count": io.read_count,
+                    "write_count": io.write_count,
+                },
+            }
+        except Exception:
+            info["disk"] = None
+
+    # Network (optional)
+    if include_network:
+        try:
+            netio = psutil.net_io_counters()
+            info["network"] = {
+                "ips": _get_ip_addresses(),
+                "io": None
+                if not netio
+                else {
+                    "bytes_sent": _bytes(netio.bytes_sent),
+                    "bytes_recv": _bytes(netio.bytes_recv),
+                    "packets_sent": netio.packets_sent,
+                    "packets_recv": netio.packets_recv,
+                },
+            }
+        except Exception:
+            info["network"] = None
+
+    # Sensors (optional)
+    if include_sensors:
+        sensors: Dict[str, Any] = {}
+
+        # temps
+        try:
+            temps = psutil.sensors_temperatures(fahrenheit=False)
+            sensors["temperatures"] = (
+                {
+                    group: [
+                        {
+                            "label": t.label,
+                            "current": t.current,
+                            "high": t.high,
+                            "critical": t.critical,
+                        }
+                        for t in items
+                    ]
+                    for group, items in temps.items()
+                }
+                if temps
+                else None
+            )
+        except Exception:
+            sensors["temperatures"] = None
+
+        # fans
+        try:
+            fans = psutil.sensors_fans()
+            sensors["fans"] = (
+                {
+                    group: [{"label": f.label, "current": f.current} for f in items]
+                    for group, items in fans.items()
+                }
+                if fans
+                else None
+            )
+        except Exception:
+            sensors["fans"] = None
+
+        # battery
+        try:
+            bat = psutil.sensors_battery()
+            sensors["battery"] = (
+                None
+                if not bat
+                else {
+                    "percent": bat.percent,
+                    "secs_left": bat.secsleft,
+                    "power_plugged": bat.power_plugged,
+                }
+            )
+        except Exception:
+            sensors["battery"] = None
+
+        info["sensors"] = sensors
+
+    # Raspberry Pi extras
+    if is_rpi:
+        rpi: Dict[str, Any] = {}
+
+        # CPU temp
+        t_raw = _read_text("/sys/class/thermal/thermal_zone0/temp")
+        rpi["cpu_temp_c"] = (int(t_raw) / 1000.0) if (t_raw and t_raw.isdigit()) else None
+
+        vc = shutil.which("vcgencmd")
+        rpi["vcgencmd_available"] = bool(vc)
+
+        if vc:
+            out = _run_cmd(["vcgencmd", "get_throttled"])
+            rpi["throttled_raw"] = out
+
+            if out and "=" in out:
+                try:
+                    hex_str = out.split("=")[1].strip()
+                    value = int(hex_str, 16)
+                    rpi["throttled_flags"] = {
+                        "undervoltage_now": bool(value & (1 << 0)),
+                        "throttling_now": bool(value & (1 << 1)),
+                        "freq_capped_now": bool(value & (1 << 2)),
+                        "temp_limit_now": bool(value & (1 << 3)),
+                        "undervoltage_occurred": bool(value & (1 << 16)),
+                        "throttling_occurred": bool(value & (1 << 17)),
+                        "freq_capped_occurred": bool(value & (1 << 18)),
+                        "temp_limit_occurred": bool(value & (1 << 19)),
+                        "raw_hex": hex_str,
+                        "raw_int": value,
+                    }
+                except Exception:
+                    rpi["throttled_flags"] = None
+            else:
+                rpi["throttled_flags"] = None
+
+            rpi["volts"] = {
+                "core": _run_cmd(["vcgencmd", "measure_volts", "core"]),
+                "sdram_c": _run_cmd(["vcgencmd", "measure_volts", "sdram_c"]),
+                "sdram_i": _run_cmd(["vcgencmd", "measure_volts", "sdram_i"]),
+                "sdram_p": _run_cmd(["vcgencmd", "measure_volts", "sdram_p"]),
+            }
+            rpi["clocks"] = {
+                "arm": _run_cmd(["vcgencmd", "measure_clock", "arm"]),
+                "core": _run_cmd(["vcgencmd", "measure_clock", "core"]),
+            }
+
+        info["rpi"] = rpi
+
+    return info
 
 
 def _apply_logging_runtime(
@@ -441,6 +754,9 @@ def _infer_expect_prefixes_upper(cmd_line: str) -> list[str]:
     if name == "SERVOPWR":
         return ["OK SERVO_PWR"]
 
+    if name in ("TELEM", "TELEMETRY"):
+        return ["OK TELEM"]
+
     if name in ("SETAENGINE", "SETBENGINE", "SETALLENGINE"):
         return [f"OK {name}"]
 
@@ -448,6 +764,19 @@ def _infer_expect_prefixes_upper(cmd_line: str) -> list[str]:
         return [f"OK {name}"]
 
     return ["OK"]
+
+def parse_arduino_telem_reply(reply: str) -> dict:
+    s = (reply or "").strip()
+    up = s.upper()
+
+    if not up.startswith("OK TELEM"):
+        raise ValueError(f"Not an Arduino telemetry reply: {reply!r}")
+
+    json_part = s[len("OK TELEM"):].strip()
+    if not json_part.startswith("{"):
+        raise ValueError(f"Telemetry JSON missing: {reply!r}")
+
+    return json.loads(json_part)
 
 
 class SerialManager:
@@ -740,6 +1069,34 @@ def _need_serial_mgr() -> SerialManager:
         raise HTTPException(status_code=503, detail="Serial not initialized yet")
     return serial_mgr
 
+async def get_arduino_telemetry_safe() -> dict:
+    try:
+        mgr = _need_serial_mgr()
+
+        last_err: str | None = None
+
+        for _ in range(2):
+            try:
+                reply = await mgr.send_cmd(
+                    "TELEM",
+                    expect_prefixes_upper=["OK TELEM"],
+                    max_wait_s=2.5,
+                    pre_drain_s=0.0,
+                    close_on_error=True,
+                )
+                data = parse_arduino_telem_reply(reply)
+                return {"ok": True, "data": data}
+            except Exception as e:
+                last_err = str(e)
+                await asyncio.sleep(0.05)
+
+        return {"ok": False, "error": last_err or "unknown error"}
+
+    except HTTPException as e:
+        return {"ok": False, "error": str(e.detail)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await ensure_logging_config_on_boot()
@@ -994,6 +1351,59 @@ async def health():
         return {"ok": False, "error": e.detail}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+    
+@app.get("/telemetry")
+async def telemetry(
+    disk: bool = True,
+    net: bool = True,
+    sensors: bool = True,
+    arduino: bool = True,
+):
+    host = get_system_snapshot(include_disk=disk, include_network=net, include_sensors=sensors)
+
+    ard = None
+    if arduino:
+        ard = await get_arduino_telemetry_safe()
+
+    return {
+        "host": host,
+        "arduino": ard,
+        "servo_pwr": SERVO_PWR_MODE_ACTIVE,
+        "serial_port": SERIAL_PORT,
+    }
+
+
+@app.websocket("/ws/telemetry")
+async def ws_telemetry(ws: WebSocket):
+    await ws.accept()
+    try:
+        while True:
+            host = get_system_snapshot(include_disk=False, include_network=True, include_sensors=True)
+            ard = await get_arduino_telemetry_safe()
+
+            payload = {
+                "host": host,
+                "arduino": ard,
+                "servo_pwr": SERVO_PWR_MODE_ACTIVE,
+                "serial_port": SERIAL_PORT,
+            }
+
+            await ws.send_text(json.dumps(payload, ensure_ascii=False))
+            await ws.send_text("\n")
+            await asyncio_sleep(STREAM_INTERVAL)
+
+    except WebSocketDisconnect:
+        return
+    except Exception:
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+@app.get("/telemetry/arduino")
+async def telemetry_arduino():
+    return await get_arduino_telemetry_safe()
+
 
 
 @app.post("/motor", response_model=MotorCommandOut)
@@ -1185,6 +1595,7 @@ async def action_left(power: int = Query(160, ge=0, le=255)):
 async def action_right(power: int = Query(160, ge=0, le=255)):
     sent, replies = await run_action("turn_right", power)
     return {"sent": sent, "replies": replies}
+
 @app.websocket("/ws/joystick")
 async def ws_joystick(websocket: WebSocket):
     rid = websocket.headers.get("x-request-id") or str(uuid.uuid4())
