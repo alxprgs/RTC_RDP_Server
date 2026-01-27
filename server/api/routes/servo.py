@@ -12,6 +12,7 @@ from server.schemas.servo import (
     ServoBatchOut,
 )
 from server.services.servo import ServoRuntimeState, set_servo_deg, set_servo_batch, build_center_items
+from server.api.deps import ensure_not_estopped, require_firmware_commands
 
 router = APIRouter(tags=["servo"])
 
@@ -56,7 +57,7 @@ async def servo_state(request: Request):
     }
 
 
-@router.post("/servo/{servo_id}", response_model=ServoSetOut, dependencies=[Depends(ensure_not_estopped)])
+@router.post("/servo/{servo_id}", response_model=ServoSetOut, dependencies=[Depends(ensure_not_estopped),Depends(require_firmware_commands(["SetServo"]))])
 async def servo_set(servo_id: int, data: ServoSetIn, request: Request):
     s = request.app.state.settings
     st = _state(request)
@@ -71,7 +72,7 @@ async def servo_set(servo_id: int, data: ServoSetIn, request: Request):
     )
 
 
-@router.post("/servo/batch", response_model=ServoBatchOut, dependencies=[Depends(ensure_not_estopped)])
+@router.post("/servo/batch", response_model=ServoBatchOut, dependencies=[Depends(ensure_not_estopped),Depends(require_firmware_commands(["SetServo"]))])
 async def servo_batch(data: ServoBatchIn, request: Request):
     s = request.app.state.settings
     st = _state(request)
@@ -82,7 +83,7 @@ async def servo_batch(data: ServoBatchIn, request: Request):
     return ServoBatchOut(items=outs)
 
 
-@router.post("/servo/center", response_model=ServoBatchOut, dependencies=[Depends(ensure_not_estopped)])
+@router.post("/servo/center", response_model=ServoBatchOut, dependencies=[Depends(ensure_not_estopped),Depends(require_firmware_commands(["SetServo"]))])
 async def servo_center(request: Request):
     s = request.app.state.settings
     st = _state(request)
@@ -119,7 +120,7 @@ async def get_servo_power_mode(request: Request):
     }
 
 
-@router.post("/servo/power", response_model=ServoPowerOut, dependencies=[Depends(ensure_not_estopped)])
+@router.post("/servo/power", response_model=ServoPowerOut, dependencies=[Depends(ensure_not_estopped),Depends(require_firmware_commands(["SetServo"]))])
 async def set_servo_power_mode(data: ServoPowerIn, request: Request):
     mgr = _serial(request)
 

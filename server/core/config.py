@@ -72,6 +72,18 @@ class Settings(BaseSettings):
     # что делать с сервами на простое
     watchdog_servo_safe_enabled: bool = False  # по умолчанию выключено, чтобы не было сюрпризов
 
+    # --- Update check (GitHub)
+    update_check_enabled: bool = True
+    update_check_interval_s: int = 6 * 60 * 60  # раз в 6 часов
+    update_check_timeout_s: float = 3.0
+    github_repo: str = "alxprgs/RTC_RDP_Server"  # owner/repo
+    github_branch: str = "main"
+    github_token: str | None = None  # если надо обойти rate-limit
+
+    # --- Device probe (Arduino caps/version)
+    device_probe_on_startup: bool = True
+    device_probe_timeout_s: float = 2.5
+
     @field_validator("servo_count")
     @classmethod
     def _v_servo_count(cls, v: int) -> int:

@@ -55,6 +55,11 @@ def infer_expect_prefixes_upper(cmd_line: str) -> list[str]:
     # --- NEW: safety
     if name == "ESTOP":
         return ["OK ESTOP"]
+    
+    if name == "CAPS":
+        return ["OK CAPS"]
+    if name in ("FWVER", "VERSION", "VER"):
+        return [f"OK {name}"]
 
     return ["OK"]
 

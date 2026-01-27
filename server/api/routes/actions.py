@@ -6,8 +6,16 @@ from server.serial.manager import SerialManager
 from server.serial.protocol import SerialProtocolError
 from server.schemas.actions import ActionIn, ActionOut
 from server.services.actions import ACTIONS, run_action
+from server.api.deps import ensure_not_estopped, require_firmware_commands
 
-router = APIRouter()
+
+router = APIRouter(
+    tags=["actions"],
+    dependencies=[
+        Depends(ensure_not_estopped),
+        Depends(require_firmware_commands(["SetAEngine", "SetBEngine"])),
+    ],
+)
 
 
 @router.get("/actions/list")

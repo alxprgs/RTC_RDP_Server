@@ -7,13 +7,29 @@ from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from server.schemas.joystick import JoystickIn  # твоя модель
-from server.services.joystick import process_joystick  # твоя логика (она шлёт команды моторам)
-from server.core.context import REQUEST_ID  # если у тебя это вынесено; иначе адаптируй
+from server.schemas.joystick import JoystickIn
+from server.services.joystick import process_joystick 
+from server.core.context import REQUEST_ID
 
 
 router = APIRouter(tags=["ws"])
 
+
+def _supported_cmds_from_app(app) -> set[str] | None:
+    info = getattr(app.state, "device_info", None) or {}
+    cmds = info.get("supported_commands")
+    if not cmds:
+        caps = info.get("caps") or {}
+        cmds = caps.get("commands") or caps.get("supported_commands")
+    if not cmds:
+        return None
+    return {str(c).strip().lower() for c in cmds if str(c).strip()}
+
+def _ws_require(app, required: list[str]) -> bool:
+    cmds = _supported_cmds_from_app(app)
+    if cmds is None:
+        return True  # старые прошивки не блокируем
+    return all(r.strip().lower() in cmds for r in required)
 
 def _get_app_and_settings(ws: WebSocket):
     app = getattr(ws, "app", None) or ws.scope.get("app")
@@ -52,6 +68,11 @@ async def ws_joystick(websocket: WebSocket):
     WS_MAX_RATE_HZ = float(getattr(settings, "ws_max_rate_hz", 30.0))
     WS_STOP_ON_CLOSE = bool(getattr(settings, "ws_stop_on_close", True))
 
+    if not _ws_require(app, ["SetAEngine", "SetBEngine"]):
+        await websocket.accept()
+        await websocket.send_json({"type": "error", "detail": "firmware_unsupported", "missing": ["SetAEngine","SetBEngine"], "status": 501})
+        await websocket.close(code=1008)
+        return
     def is_estopped() -> bool:
         return bool(getattr(app.state, "estop", False))
 

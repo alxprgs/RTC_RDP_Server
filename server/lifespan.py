@@ -10,11 +10,39 @@ from server.serial.manager import SerialManager
 from server.services.servo_power import ensure_servo_power_mode_on_boot
 from server.core.watchdog import start_watchdog, stop_watchdog
 
+import asyncio
+import time
+from server.core.update_checker import check_github_latest, status_to_dict, should_refresh
+from server.serial.device_probe import probe_device
+
+
+async def _update_check_loop(app):
+    s = app.state.settings
+    while True:
+        await asyncio.sleep(30)
+        try:
+            if not s.update_check_enabled:
+                continue
+            last = getattr(app.state, "update_last_checked_ts", None)
+            if not should_refresh(last, s.update_check_interval_s):
+                continue
+
+            st = check_github_latest(
+                repo=s.github_repo,
+                branch=s.github_branch,
+                timeout_s=float(s.update_check_timeout_s),
+                token=s.github_token,
+            )
+            app.state.update_status = status_to_dict(st)
+            app.state.update_last_checked_ts = time.time()
+        except Exception:
+            # тихо: это не критично
+            pass
+
 
 def build_lifespan(settings: Settings):
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        settings = Settings()
         app.state.settings = settings
         start_watchdog(app)
         # 1) применяем профиль логов / интерактивный выбор
@@ -40,8 +68,17 @@ def build_lifespan(settings: Settings):
             logging_runtime=runtime,
         )
         app.state.serial_mgr = serial_mgr
+        app.state.device_info = None
+        app.state.update_status = None
+        app.state.update_last_checked_ts = None
 
-        # 4) старт
+        if app.state.settings.device_probe_on_startup:
+            try:
+                app.state.device_info = await probe_device(app.state.serial_mgr, timeout_s=float(app.state.settings.device_probe_timeout_s))
+            except Exception:
+                app.state.device_info = None
+
+        app.state.update_task = asyncio.create_task(_update_check_loop(app))
         try:
             servo_mode = await ensure_servo_power_mode_on_boot(
                 serial_mgr=serial_mgr,
@@ -50,10 +87,21 @@ def build_lifespan(settings: Settings):
             app.state.servo_pwr_mode_active = servo_mode
             yield
         finally:
+            t = getattr(app.state, "update_task", None)
             try:
+                #1
                 serial_mgr.close()
+                #2
                 await stop_watchdog(app)
+                #3
+                if t:
+                    t.cancel()
+                    try:
+                        await t
+                    except asyncio.CancelledError:
+                        pass
             except Exception:
                 pass
+
 
     return lifespan

@@ -7,6 +7,8 @@ from server.api.routes.actions import router as actions_router
 from server.api.routes.servo import router as servo_router
 from server.api.routes.ws_joystick import router as ws_joystick_router
 from server.api.routes.safety import router as safety_router
+from server.api.routes.version import router as version_router
+from server.api.routes.device import router as device_router
 
 
 def include_routers(app):
@@ -19,3 +21,5 @@ def include_routers(app):
     app.include_router(actions_router)
     app.include_router(servo_router)
     app.include_router(ws_joystick_router)
+    app.include_router(version_router)
+    app.include_router(device_router)
