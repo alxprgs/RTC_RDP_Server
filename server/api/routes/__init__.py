@@ -1,20 +1,21 @@
-from fastapi import APIRouter
+from server.api.routes.health import router as health_router
+from server.api.routes.telemetry import router as telemetry_router
+from server.api.routes.ws_telemetry import router as ws_telemetry_router
+from server.api.routes.motor import router as motor_router
+from server.api.routes.joystick import router as joystick_router
+from server.api.routes.actions import router as actions_router
+from server.api.routes.servo import router as servo_router
+from server.api.routes.ws_joystick import router as ws_joystick_router
+from server.api.routes.safety import router as safety_router
 
-from .health import router as health_router
-from .telemetry import router as telemetry_router
-from .motor import router as motor_router
-from .joystick import router as joystick_router
-from .servo import router as servo_router
-from .actions import router as actions_router
-from .ws_telemetry import router as ws_telemetry_router
-from .ws_joystick import router as ws_joystick_router
 
-router = APIRouter()
-router.include_router(health_router)
-router.include_router(telemetry_router)
-router.include_router(ws_telemetry_router)
-router.include_router(motor_router)
-router.include_router(joystick_router)
-router.include_router(servo_router)
-router.include_router(actions_router)
-router.include_router(ws_joystick_router)
+def include_routers(app):
+    app.include_router(health_router)
+    app.include_router(telemetry_router)
+    app.include_router(ws_telemetry_router)
+    app.include_router(safety_router)
+    app.include_router(motor_router)
+    app.include_router(joystick_router)
+    app.include_router(actions_router)
+    app.include_router(servo_router)
+    app.include_router(ws_joystick_router)

@@ -44,10 +44,20 @@ def infer_expect_prefixes_upper(cmd_line: str) -> list[str]:
     if name in ("SETAENGINE", "SETBENGINE", "SETALLENGINE"):
         return [f"OK {name}"]
 
-    if name in ("SETSERVOA", "SETSERVOB", "SETSERVOALL"):
-        return [f"OK {name}"]
+    # --- NEW: servo multi
+    if name == "SETSERVO":
+        return ["OK SETSERVO"]
+    if name == "SETSERVOS":
+        return ["OK SETSERVOS"]
+    if name in ("SERVOCENTER", "SERVO_CENTER"):
+        return ["OK SERVO_CENTER"]
+
+    # --- NEW: safety
+    if name == "ESTOP":
+        return ["OK ESTOP"]
 
     return ["OK"]
+
 
 
 def parse_arduino_telem_reply(reply: str) -> dict:

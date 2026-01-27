@@ -29,6 +29,9 @@ class SerialManager:
         self._lock = asyncio.Lock()
         self._rx_buf = bytearray()
         self.runtime = logging_runtime or LoggingRuntime("INFO", False, False, 800, 200)
+        self.last_any_actuator_ts = 0.0
+        self.last_motor_ts = 0.0
+        self.last_servo_ts = 0.0
 
     def _slog(self, level: str, msg: str, *args):
         if not self.runtime.serial_log:
@@ -43,6 +46,31 @@ class SerialManager:
             serial_log.error(msg, *args)
         else:
             serial_log.info(msg, *args)
+    
+    def _mark_activity_line(self, line: str) -> None:
+        up = (line or "").strip().upper()
+        if not up:
+            return
+
+        now = time.monotonic()
+
+        # моторы
+        if up.startswith("SETAENGINE") or up.startswith("SETBENGINE") or up.startswith("SETALLENGINE"):
+            self.last_any_actuator_ts = now
+            self.last_motor_ts = now
+            return
+
+        # сервы (универсальные + будущие)
+        if up.startswith("SETSERVO") or up.startswith("SETSERVOS") or up.startswith("SERVOCENTER"):
+            self.last_any_actuator_ts = now
+            self.last_servo_ts = now
+            return
+
+        # attach/detach тоже считаем серво-активностью
+        if up.startswith("SERVOATTACH") or up.startswith("SERVODETACH"):
+            self.last_any_actuator_ts = now
+            self.last_servo_ts = now
+            return
 
     def connect(self) -> None:
         rid = REQUEST_ID.get()
@@ -177,6 +205,7 @@ class SerialManager:
         max_wait_s: float = 2.5,
         pre_drain_s: float = 0.0,
         max_lines: int = 80,
+        mark_activity: bool = True,
     ) -> str:
         self.connect()
         if not self._ser:
@@ -185,6 +214,8 @@ class SerialManager:
         clean = sanitize_outgoing_line(line)
         if not clean:
             raise ValueError("Empty command")
+        if mark_activity:
+            self._mark_activity_line(clean)
 
         payload = (clean + "\n").encode("ascii", errors="strict")
 
@@ -224,6 +255,7 @@ class SerialManager:
         max_wait_s: float = 2.5,
         pre_drain_s: float = 0.0,
         close_on_error: bool = True,
+        mark_activity: bool = True,
     ) -> str:
         async with self._lock:
             try:
@@ -233,20 +265,24 @@ class SerialManager:
                     expect_prefixes_upper,
                     max_wait_s,
                     pre_drain_s,
+                    80,
+                    mark_activity,
                 )
             except Exception:
                 if close_on_error:
                     self.close()
                 raise
 
-    async def send_cmds(self, lines: list[str], max_wait_s_each: float = 2.5) -> list[str]:
+    async def send_cmds(self, lines: list[str], max_wait_s_each: float = 2.5, mark_activity: bool = True) -> list[str]:
         async with self._lock:
             replies: list[str] = []
             try:
                 for line in lines:
+                    if mark_activity:
+                        self._mark_activity_line(line)
                     exp = infer_expect_prefixes_upper(line)
                     replies.append(
-                        await asyncio.to_thread(self._send_cmd_sync, line, exp, max_wait_s_each, 0.0)
+                        await asyncio.to_thread(self._send_cmd_sync, line, exp, max_wait_s_each, 0.0, 80, False)
                     )
                 return replies
             except Exception:

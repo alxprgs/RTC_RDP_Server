@@ -8,11 +8,15 @@ from server.core.logging_runtime import ensure_logging_config_on_boot
 from server.serial.ports import find_arduino_port
 from server.serial.manager import SerialManager
 from server.services.servo_power import ensure_servo_power_mode_on_boot
+from server.core.watchdog import start_watchdog, stop_watchdog
 
 
 def build_lifespan(settings: Settings):
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        settings = Settings()
+        app.state.settings = settings
+        start_watchdog(app)
         # 1) применяем профиль логов / интерактивный выбор
         runtime = await ensure_logging_config_on_boot(settings)
         app.state.logging_runtime = runtime
@@ -48,6 +52,7 @@ def build_lifespan(settings: Settings):
         finally:
             try:
                 serial_mgr.close()
+                await stop_watchdog(app)
             except Exception:
                 pass
 

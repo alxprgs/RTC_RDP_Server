@@ -6,12 +6,14 @@ from server.lifespan import build_lifespan
 from server.core.logging_runtime import setup_base_logging
 from server.api.routes import router as api_router
 from server.core.logging_runtime import request_logging_middleware
+from server.services.servo import ServoRuntimeState
 
 
 def create_app() -> FastAPI:
     settings = Settings()
+    app.state.estop = False
+    app.state.servo_state = ServoRuntimeState()
 
-    # базовая конфигурация логирования (формат, logger-и)
     setup_base_logging(settings)
 
     app = FastAPI(
@@ -19,13 +21,10 @@ def create_app() -> FastAPI:
         lifespan=build_lifespan(settings),
     )
 
-    # сохраняем settings в state
     app.state.settings = settings
 
-    # middleware логирования запросов (берёт runtime flags из app.state)
     app.middleware("http")(request_logging_middleware)
 
-    # роуты
     app.include_router(api_router)
 
     return app
