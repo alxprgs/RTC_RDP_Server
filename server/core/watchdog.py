@@ -28,7 +28,7 @@ async def _try_servo_safe_pose(app: FastAPI, reason: str) -> bool:
     if bool(getattr(app.state, "estop", False)):
         return False
 
-    # строим безопасную позу из settings.servo_safe_pose / center
+    # строим безопасную позицию из settings.servo_safe_pose / center
     lines = []
     for sid in range(1, int(s.servo_count) + 1):
         deg = int(s.servo_safe_pose.get(sid, s.servo_center_deg))
