@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Tuple, Any
+from typing import Dict, Tuple, Any, Optional
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -84,6 +84,12 @@ class Settings(BaseSettings):
     device_probe_on_startup: bool = True
     device_probe_timeout_s: float = 2.5
 
+    log_level: Optional[str] = None
+    log_profile: Optional[str] = None
+
+
+    connection_type: Optional[str] = None
+
     @field_validator("servo_count")
     @classmethod
     def _v_servo_count(cls, v: int) -> int:
@@ -148,3 +154,9 @@ class Settings(BaseSettings):
         if v < 0:
             raise ValueError("watchdog times must be >= 0")
         return float(v)
+
+    @field_validator("connection_type", mode="before")
+    def validate_connection_type(cls, v):
+        if v not in ['serial', 'uart', None]:
+            raise ValueError("connection_type must be 'serial', 'uart', or None.")
+        return v

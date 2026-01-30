@@ -1,11 +1,10 @@
 from __future__ import annotations
-
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from server.core.config import Settings
 from server.core.logging_runtime import ensure_logging_config_on_boot
-from server.serial.ports import find_arduino_port
+from server.serial.ports import find_arduino_port, find_uart_port
 from server.serial.manager import SerialManager
 from server.services.servo_power import ensure_servo_power_mode_on_boot
 from server.core.watchdog import start_watchdog, stop_watchdog
@@ -15,6 +14,30 @@ import time
 from server.core.update_checker import check_github_latest, status_to_dict, should_refresh
 from server.serial.device_probe import probe_device
 
+try:
+    from InquirerPy import inquirer
+except ImportError:
+    inquirer = None
+
+
+async def choose_connection_type() -> str:
+    if inquirer:
+        connection_type = await inquirer.select(
+            message="Выберите тип соединения",
+            choices=["serial", "uart"],
+            default="serial"
+        ).execute_async()
+        return connection_type
+    else:
+        return "serial"
+
+
+async def get_connection_type(settings: Settings) -> str:
+    """Определяет, какой тип соединения использовать: из конфигурации или через консоль."""
+    if settings.connection_type:
+        return settings.connection_type
+    else:
+        return await choose_connection_type()
 
 async def _update_check_loop(app):
     s = app.state.settings
@@ -39,7 +62,6 @@ async def _update_check_loop(app):
             # тихо: это не критично
             pass
 
-
 def build_lifespan(settings: Settings):
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -49,14 +71,19 @@ def build_lifespan(settings: Settings):
         runtime = await ensure_logging_config_on_boot(settings)
         app.state.logging_runtime = runtime
 
-        # 2) выбираем порт Arduino
-        try:
-            serial_port = find_arduino_port()
-        except Exception as e:
-            raise RuntimeError(
-                f"Не удалось авто-найти порт Arduino: {e}. "
-                f"Задай ARDUINO_PORT (например COM11 или /dev/ttyACM0)."
-            )
+        # 2) выбираем порт (Serial или UART)
+        connection_type = await get_connection_type(settings)
+        serial_port = None
+        if connection_type == 'serial':
+            try:
+                serial_port = find_arduino_port()
+            except Exception as e:
+                raise RuntimeError(f"Не удалось найти порт Arduino по serial: {e}.")
+        elif connection_type == 'uart':
+            try:
+                serial_port = find_uart_port()
+            except Exception as e:
+                raise RuntimeError(f"Не удалось найти порт по UART: {e}.")
 
         app.state.serial_port = serial_port
 
@@ -102,6 +129,5 @@ def build_lifespan(settings: Settings):
                         pass
             except Exception:
                 pass
-
 
     return lifespan
