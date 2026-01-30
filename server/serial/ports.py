@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+import logging
 import os
 import sys
-import logging
-from typing import Optional, List
+from typing import Any, Optional, Sequence
 
 from serial.tools import list_ports
 
 log = logging.getLogger("motor-bridge")
 
 
-def _looks_like_arduino(p) -> bool:
+def _looks_like_arduino(p: Any) -> bool:
     text = " ".join(
         [
             str(getattr(p, "description", "") or ""),
@@ -35,7 +35,7 @@ def _looks_like_arduino(p) -> bool:
     return any(k in text for k in keywords)
 
 
-def find_arduino_port(prefer_vid_pid: Optional[List[tuple[int, int]]] = None) -> str:
+def find_arduino_port(prefer_vid_pid: Optional[Sequence[tuple[int, int]]] = None) -> str:
     env_port = os.getenv("ARDUINO_PORT")
     if env_port:
         return env_port
@@ -78,7 +78,8 @@ def find_arduino_port(prefer_vid_pid: Optional[List[tuple[int, int]]] = None) ->
     scored.sort(key=lambda x: x[0], reverse=True)
     return scored[0][1].device
 
-def find_uart_port(prefer_vid_pid: Optional[List[tuple[int, int]]] = None) -> str:
+
+def find_uart_port(prefer_vid_pid: Optional[Sequence[tuple[int, int]]] = None) -> str:
     env_port = os.getenv("UART_PORT")
     if env_port:
         return env_port

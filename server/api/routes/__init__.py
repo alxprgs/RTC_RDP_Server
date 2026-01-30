@@ -1,3 +1,5 @@
+from fastapi import FastAPI
+
 from server.api.routes.health import router as health_router
 from server.api.routes.telemetry import router as telemetry_router
 from server.api.routes.ws_telemetry import router as ws_telemetry_router
@@ -11,7 +13,7 @@ from server.api.routes.version import router as version_router
 from server.api.routes.device import router as device_router
 
 
-def include_routers(app):
+def include_routers(app: FastAPI) -> None:
     app.include_router(health_router)
     app.include_router(telemetry_router)
     app.include_router(ws_telemetry_router)

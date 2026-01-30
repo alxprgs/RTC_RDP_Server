@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 
-from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from server.api.deps import get_settings
 from server.core.config import Settings
+from server.serial.manager import SerialManager
 from server.services.telemetry import get_arduino_telemetry_safe
 from server.utils.system_snapshot import get_system_snapshot
 
@@ -14,15 +14,20 @@ router = APIRouter()
 
 
 @router.websocket("/ws/telemetry")
-async def ws_telemetry(ws: WebSocket):
+async def ws_telemetry(ws: WebSocket) -> None:
     await ws.accept()
     try:
-        request: Request | None = None  # ws не даёт Request, берём settings из ws.app.state
+        # ws не даёт Request, берём settings из ws.app.state
         settings: Settings = ws.app.state.settings
-        serial_mgr = getattr(ws.app.state, "serial_mgr", None)
+        serial_mgr: SerialManager | None = getattr(ws.app.state, "serial_mgr", None)
 
         while True:
-            host = get_system_snapshot(settings=settings, include_disk=False, include_network=True, include_sensors=True)
+            host = get_system_snapshot(
+                settings=settings,
+                include_disk=False,
+                include_network=True,
+                include_sensors=True,
+            )
             ard = await get_arduino_telemetry_safe(serial_mgr)
 
             payload = {

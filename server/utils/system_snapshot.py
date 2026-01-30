@@ -95,7 +95,7 @@ def get_system_snapshot(
             or _read_text("/sys/firmware/devicetree/base/model")
         )
 
-    # uptime
+    # время работы
     try:
         boot = psutil.boot_time()
         info["uptime"] = {
@@ -105,7 +105,7 @@ def get_system_snapshot(
     except Exception:
         info["uptime"] = None
 
-    # CPU
+    # процессор
     try:
         cpu_freq = psutil.cpu_freq()
         info["cpu"] = {
@@ -128,7 +128,7 @@ def get_system_snapshot(
     except Exception:
         info["cpu"] = None
 
-    # RAM / Swap
+    # память / своп
     try:
         vm = psutil.virtual_memory()
         sm = psutil.swap_memory()
@@ -149,7 +149,7 @@ def get_system_snapshot(
     except Exception:
         info["memory"] = None
 
-    # Disk (optional)
+    # диск (опционально)
     if include_disk:
         try:
             parts = []
@@ -190,7 +190,7 @@ def get_system_snapshot(
         except Exception:
             info["disk"] = None
 
-    # Network (optional)
+    # сеть (опционально)
     if include_network:
         try:
             netio = psutil.net_io_counters()
@@ -208,7 +208,7 @@ def get_system_snapshot(
         except Exception:
             info["network"] = None
 
-    # Sensors (optional)
+    # датчики (опционально)
     if include_sensors:
         sensors: Dict[str, Any] = {}
 
@@ -262,7 +262,7 @@ def get_system_snapshot(
 
         info["sensors"] = sensors
 
-    # Raspberry Pi extras
+    # дополнительные данные Raspberry Pi
     if is_rpi:
         rpi: Dict[str, Any] = {}
         t_raw = _read_text("/sys/class/thermal/thermal_zone0/temp")

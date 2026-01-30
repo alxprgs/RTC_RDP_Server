@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+
+from server.serial.manager import SerialManager
 
 router = APIRouter(tags=["safety"])
 
 
-def _serial(request: Request):
+def _serial(request: Request) -> SerialManager:
     mgr = getattr(request.app.state, "serial_mgr", None)
     if mgr is None:
         raise HTTPException(status_code=503, detail="Serial not initialized yet")
@@ -13,7 +15,7 @@ def _serial(request: Request):
 
 
 @router.get("/safety/state")
-async def safety_state(request: Request):
+async def safety_state(request: Request) -> dict[str, bool]:
     return {
         "estop_enabled": bool(request.app.state.settings.estop_enabled),
         "estop": bool(getattr(request.app.state, "estop", False)),
@@ -21,7 +23,7 @@ async def safety_state(request: Request):
 
 
 @router.post("/estop")
-async def estop_on(request: Request):
+async def estop_on(request: Request) -> dict[str, bool]:
     if not request.app.state.settings.estop_enabled:
         raise HTTPException(status_code=404, detail="E-STOP is disabled in settings")
 
@@ -36,7 +38,13 @@ async def estop_on(request: Request):
 
     # И отдельная команда для новой прошивки (может пока не существовать) — не критично
     try:
-        await mgr.send_cmd("EStop", expect_prefixes_upper=["OK ESTOP"], max_wait_s=2.5, pre_drain_s=0.0, close_on_error=False)
+        await mgr.send_cmd(
+            "EStop",
+            expect_prefixes_upper=["OK ESTOP"],
+            max_wait_s=2.5,
+            pre_drain_s=0.0,
+            close_on_error=False,
+        )
     except Exception:
         pass
 
@@ -44,7 +52,7 @@ async def estop_on(request: Request):
 
 
 @router.post("/estop/reset")
-async def estop_reset(request: Request):
+async def estop_reset(request: Request) -> dict[str, bool]:
     if not request.app.state.settings.estop_enabled:
         raise HTTPException(status_code=404, detail="E-STOP is disabled in settings")
 
@@ -52,7 +60,13 @@ async def estop_reset(request: Request):
     mgr = _serial(request)
 
     try:
-        await mgr.send_cmd("EStop RESET", expect_prefixes_upper=["OK ESTOP"], max_wait_s=2.5, pre_drain_s=0.0, close_on_error=False)
+        await mgr.send_cmd(
+            "EStop RESET",
+            expect_prefixes_upper=["OK ESTOP"],
+            max_wait_s=2.5,
+            pre_drain_s=0.0,
+            close_on_error=False,
+        )
     except Exception:
         pass
 

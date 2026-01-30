@@ -12,7 +12,7 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _parse_ok_json(reply: str, token: str) -> dict:
+def _parse_ok_json(reply: str, token: str) -> dict[str, Any]:
     s = (reply or "").strip()
     up = s.upper()
     prefix = f"OK {token}".upper()
@@ -24,7 +24,7 @@ def _parse_ok_json(reply: str, token: str) -> dict:
     return json.loads(tail)
 
 
-def _parse_ok_text_or_json(reply: str, token: str) -> dict:
+def _parse_ok_text_or_json(reply: str, token: str) -> dict[str, Any]:
     s = (reply or "").strip()
     up = s.upper()
     prefix = f"OK {token}".upper()
@@ -45,9 +45,14 @@ async def probe_device(serial_mgr: SerialManager, timeout_s: float = 2.5) -> Dic
     """
     out: Dict[str, Any] = {"ts_utc": _utc_now(), "caps": None, "fw": None, "supported_commands": None}
 
-    # CAPS
+    # Запрос CAPS
     try:
-        r = await serial_mgr.send_cmd("CAPS", expect_prefixes_upper=["OK CAPS"], max_wait_s=timeout_s, close_on_error=False)
+        r = await serial_mgr.send_cmd(
+            "CAPS",
+            expect_prefixes_upper=["OK CAPS"],
+            max_wait_s=timeout_s,
+            close_on_error=False,
+        )
         caps = _parse_ok_json(r, "CAPS")
         out["caps"] = caps
 
@@ -60,10 +65,15 @@ async def probe_device(serial_mgr: SerialManager, timeout_s: float = 2.5) -> Dic
     except Exception:
         pass
 
-    # FW version (пробуем несколько команд)
+    # Версия прошивки (пробуем несколько команд)
     for cmd in ("FWVER", "VERSION", "VER"):
         try:
-            r = await serial_mgr.send_cmd(cmd, expect_prefixes_upper=[f"OK {cmd}"], max_wait_s=timeout_s, close_on_error=False)
+            r = await serial_mgr.send_cmd(
+                cmd,
+                expect_prefixes_upper=[f"OK {cmd}"],
+                max_wait_s=timeout_s,
+                close_on_error=False,
+            )
             out["fw"] = {"cmd": cmd, "reply": _parse_ok_text_or_json(r, cmd)}
             break
         except SerialProtocolError:

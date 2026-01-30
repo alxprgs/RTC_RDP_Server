@@ -21,7 +21,13 @@ serial_log = logging.getLogger("motor-bridge.serial")
 
 
 class SerialManager:
-    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 1.0, logging_runtime: LoggingRuntime | None = None):
+    def __init__(
+        self: "SerialManager",
+        port: str,
+        baudrate: int = 115200,
+        timeout: float = 1.0,
+        logging_runtime: LoggingRuntime | None = None,
+    ) -> None:
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
@@ -33,7 +39,7 @@ class SerialManager:
         self.last_motor_ts = 0.0
         self.last_servo_ts = 0.0
 
-    def _slog(self, level: str, msg: str, *args):
+    def _slog(self: "SerialManager", level: str, msg: str, *args: object) -> None:
         if not self.runtime.serial_log:
             serial_log.debug(msg, *args)
             return
@@ -46,8 +52,8 @@ class SerialManager:
             serial_log.error(msg, *args)
         else:
             serial_log.info(msg, *args)
-    
-    def _mark_activity_line(self, line: str) -> None:
+
+    def _mark_activity_line(self: "SerialManager", line: str) -> None:
         up = (line or "").strip().upper()
         if not up:
             return
@@ -66,18 +72,25 @@ class SerialManager:
             self.last_servo_ts = now
             return
 
-        # attach/detach тоже считаем серво-активностью
+        # подключение/отключение тоже считаем серво-активностью
         if up.startswith("SERVOATTACH") or up.startswith("SERVODETACH"):
             self.last_any_actuator_ts = now
             self.last_servo_ts = now
             return
 
-    def connect(self) -> None:
+    def connect(self: "SerialManager") -> None:
         rid = REQUEST_ID.get()
         if self._ser and self._ser.is_open:
             return
 
-        self._slog("info", "CONNECT port=%s baud=%s timeout=%.2fs | rid=%s", self.port, self.baudrate, self.timeout, rid)
+        self._slog(
+            "info",
+            "CONNECT port=%s baud=%s timeout=%.2fs | rid=%s",
+            self.port,
+            self.baudrate,
+            self.timeout,
+            rid,
+        )
         self._ser = serial.Serial(
             self.port,
             self.baudrate,
@@ -96,7 +109,7 @@ class SerialManager:
         self._rx_buf.clear()
         self._slog("info", "CONNECTED port=%s | rid=%s", self.port, rid)
 
-    def close(self) -> None:
+    def close(self: "SerialManager") -> None:
         rid = REQUEST_ID.get()
         if self._ser:
             try:
@@ -108,7 +121,11 @@ class SerialManager:
         self._ser = None
         self._rx_buf.clear()
 
-    def _readline_buffered_sync(self, deadline: float, max_line: int = 256) -> str:
+    def _readline_buffered_sync(
+        self: "SerialManager",
+        deadline: float,
+        max_line: int = 256,
+    ) -> str:
         if not self._ser:
             raise RuntimeError("Serial not connected")
 
@@ -134,7 +151,11 @@ class SerialManager:
 
         return ""
 
-    def _drain_lines_sync(self, seconds: float = 1.0, max_lines: int = 200) -> list[str]:
+    def _drain_lines_sync(
+        self: "SerialManager",
+        seconds: float = 1.0,
+        max_lines: int = 200,
+    ) -> list[str]:
         self.connect()
         rid = REQUEST_ID.get()
         end = time.monotonic() + max(0.0, seconds)
@@ -160,7 +181,7 @@ class SerialManager:
         return lines
 
     def _wait_relevant_reply_sync(
-        self,
+        self: "SerialManager",
         sent_line: str,
         expect_prefixes_upper: Sequence[str],
         max_wait_s: float,
@@ -199,7 +220,7 @@ class SerialManager:
         )
 
     def _send_cmd_sync(
-        self,
+        self: "SerialManager",
         line: str,
         expect_prefixes_upper: Optional[Sequence[str]] = None,
         max_wait_s: float = 2.5,
@@ -223,7 +244,11 @@ class SerialManager:
             expect_prefixes_upper = infer_expect_prefixes_upper(clean)
 
         rid = REQUEST_ID.get()
-        preview = clean if len(clean) <= self.runtime.serial_max_preview else clean[: self.runtime.serial_max_preview] + "…(truncated)"
+        preview = (
+            clean
+            if len(clean) <= self.runtime.serial_max_preview
+            else clean[: self.runtime.serial_max_preview] + "…(truncated)"
+        )
 
         if pre_drain_s > 0:
             try:
@@ -232,7 +257,14 @@ class SerialManager:
                 pass
 
         t0 = time.perf_counter()
-        self._slog("info", "→ TX %r (%d bytes) expect=%s | rid=%s", preview, len(payload), list(expect_prefixes_upper), rid)
+        self._slog(
+            "info",
+            "→ TX %r (%d bytes) expect=%s | rid=%s",
+            preview,
+            len(payload),
+            list(expect_prefixes_upper),
+            rid,
+        )
 
         self._ser.write(payload)
         self._ser.flush()
@@ -245,11 +277,18 @@ class SerialManager:
         )
 
         dt = (time.perf_counter() - t0) * 1000.0
-        self._slog("info", "✓ CMD OK sent=%r reply=%r | rid=%s | took=%.1fms", preview, reply, rid, dt)
+        self._slog(
+            "info",
+            "✓ CMD OK sent=%r reply=%r | rid=%s | took=%.1fms",
+            preview,
+            reply,
+            rid,
+            dt,
+        )
         return reply
 
     async def send_cmd(
-        self,
+        self: "SerialManager",
         line: str,
         expect_prefixes_upper: Optional[Sequence[str]] = None,
         max_wait_s: float = 2.5,
@@ -273,7 +312,12 @@ class SerialManager:
                     self.close()
                 raise
 
-    async def send_cmds(self, lines: list[str], max_wait_s_each: float = 2.5, mark_activity: bool = True) -> list[str]:
+    async def send_cmds(
+        self: "SerialManager",
+        lines: Sequence[str],
+        max_wait_s_each: float = 2.5,
+        mark_activity: bool = True,
+    ) -> list[str]:
         async with self._lock:
             replies: list[str] = []
             try:

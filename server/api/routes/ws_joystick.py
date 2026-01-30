@@ -3,19 +3,21 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from typing import Optional
+from typing import Iterable, Optional
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 
-from server.schemas.joystick import JoystickIn
-from server.services.joystick import process_joystick 
+from server.core.config import Settings
 from server.core.context import REQUEST_ID
+from server.schemas.joystick import JoystickIn
+from server.serial.manager import SerialManager
+from server.services.joystick import process_joystick
 
 
 router = APIRouter(tags=["ws"])
 
 
-def _supported_cmds_from_app(app) -> set[str] | None:
+def _supported_cmds_from_app(app: FastAPI) -> set[str] | None:
     info = getattr(app.state, "device_info", None) or {}
     cmds = info.get("supported_commands")
     if not cmds:
@@ -25,13 +27,15 @@ def _supported_cmds_from_app(app) -> set[str] | None:
         return None
     return {str(c).strip().lower() for c in cmds if str(c).strip()}
 
-def _ws_require(app, required: list[str]) -> bool:
+
+def _ws_require(app: FastAPI, required: Iterable[str]) -> bool:
     cmds = _supported_cmds_from_app(app)
     if cmds is None:
         return True  # старые прошивки не блокируем
     return all(r.strip().lower() in cmds for r in required)
 
-def _get_app_and_settings(ws: WebSocket):
+
+def _get_app_and_settings(ws: WebSocket) -> tuple[FastAPI, Settings]:
     app = getattr(ws, "app", None) or ws.scope.get("app")
     if app is None:
         raise RuntimeError("WebSocket app is not available in scope")
@@ -41,7 +45,7 @@ def _get_app_and_settings(ws: WebSocket):
     return app, settings
 
 
-def _get_serial_mgr(app):
+def _get_serial_mgr(app: FastAPI) -> SerialManager | None:
     mgr = getattr(app.state, "serial_mgr", None)
     if mgr is None:
         return None
@@ -49,7 +53,7 @@ def _get_serial_mgr(app):
 
 
 @router.websocket("/ws/joystick")
-async def ws_joystick(websocket: WebSocket):
+async def ws_joystick(websocket: WebSocket) -> None:
     app, settings = _get_app_and_settings(websocket)
     log = getattr(app.state, "log", None)  # опционально если ты логгер кладёшь в state
     if log is None:
@@ -63,25 +67,33 @@ async def ws_joystick(websocket: WebSocket):
     client_host = getattr(websocket.client, "host", "-")
     client_port = getattr(websocket.client, "port", "-")
 
-    WS_PING_INTERVAL = float(getattr(settings, "ws_ping_interval", 5.0))
-    WS_PING_TIMEOUT = float(getattr(settings, "ws_ping_timeout", 15.0))
-    WS_MAX_RATE_HZ = float(getattr(settings, "ws_max_rate_hz", 30.0))
-    WS_STOP_ON_CLOSE = bool(getattr(settings, "ws_stop_on_close", True))
+    ws_ping_interval = float(getattr(settings, "ws_ping_interval", 5.0))
+    ws_ping_timeout = float(getattr(settings, "ws_ping_timeout", 15.0))
+    ws_max_rate_hz = float(getattr(settings, "ws_max_rate_hz", 30.0))
+    ws_stop_on_close = bool(getattr(settings, "ws_stop_on_close", True))
 
-    if not _ws_require(app, ["SetAEngine", "SetBEngine"]):
+    if not _ws_require(app, ("SetAEngine", "SetBEngine")):
         await websocket.accept()
-        await websocket.send_json({"type": "error", "detail": "firmware_unsupported", "missing": ["SetAEngine","SetBEngine"], "status": 501})
+        await websocket.send_json(
+            {
+                "type": "error",
+                "detail": "firmware_unsupported",
+                "missing": ["SetAEngine", "SetBEngine"],
+                "status": 501,
+            }
+        )
         await websocket.close(code=1008)
         return
+
     def is_estopped() -> bool:
         return bool(getattr(app.state, "estop", False))
 
-    async def safe_stop(reason: str):
+    async def safe_stop(reason: str) -> None:
         """
         ВАЖНО: это единственные мотор-команды, которые мы допускаем даже при E-STOP,
         потому что они "стоп". (Если хочешь совсем ноль команд при E-STOP — скажи.)
         """
-        if not WS_STOP_ON_CLOSE:
+        if not ws_stop_on_close:
             return
         mgr = _get_serial_mgr(app)
         if mgr is None:
@@ -103,10 +115,10 @@ async def ws_joystick(websocket: WebSocket):
     latest_lock = asyncio.Lock()
     new_data_event = asyncio.Event()
 
-    # Чтобы не спамить stop на каждом кадре при активном E-STOP:
+    # Чтобы не спамить стоп на каждом кадре при активном E-STOP:
     estop_stop_sent = False
 
-    async def receiver_loop():
+    async def receiver_loop() -> None:
         nonlocal last_client_msg, latest, latest_seq
         while True:
             try:
@@ -118,7 +130,7 @@ async def ws_joystick(websocket: WebSocket):
 
             last_client_msg = time.monotonic()
 
-            # ping/pong служебные
+            # пинг/понг служебные
             if isinstance(msg, dict) and msg.get("type") in ("pong", "ping"):
                 if msg.get("type") == "ping":
                     await websocket.send_json({"type": "pong", "t": time.time()})
@@ -136,9 +148,9 @@ async def ws_joystick(websocket: WebSocket):
                 latest_seq += 1
                 new_data_event.set()
 
-    async def sender_loop():
+    async def sender_loop() -> None:
         nonlocal sent_seq, estop_stop_sent
-        min_interval = 1.0 / max(1.0, WS_MAX_RATE_HZ)
+        min_interval = 1.0 / max(1.0, ws_max_rate_hz)
         last_send = 0.0
 
         while True:
@@ -181,13 +193,23 @@ async def ws_joystick(websocket: WebSocket):
                         return
                     continue
 
-                # если E-STOP сняли — снова разрешаем (и сбрасываем флаг stop)
+                # если E-STOP сняли — снова разрешаем (и сбрасываем флаг стопа)
                 if estop_stop_sent and not is_estopped():
                     estop_stop_sent = False
 
                 # обычный режим: обрабатываем и шлём мотор-команды через process_joystick()
                 try:
-                    out = await process_joystick(app, data)  # если у тебя другой интерфейс - поправь
+                    mgr = _get_serial_mgr(app)
+                    if mgr is None:
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "detail": "serial_unavailable",
+                                "status": 503,
+                            }
+                        )
+                        return
+                    out = await process_joystick(mgr, data)
                     sent_seq = target_seq
                     last_send = time.monotonic()
 
@@ -202,19 +224,25 @@ async def ws_joystick(websocket: WebSocket):
                             "t": time.time(),
                         }
                     )
-                except Exception as e:
+                except Exception:
                     # Важно: если в process_joystick есть HTTPException — можешь здесь точнее распаковать
                     try:
-                        await websocket.send_json({"type": "error", "detail": str(e)})
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "detail": "internal_error",
+                                "status": 500,
+                            }
+                        )
                     except Exception:
                         return
 
-    async def ping_loop():
+    async def ping_loop() -> None:
         nonlocal last_client_msg
         while True:
-            await asyncio.sleep(WS_PING_INTERVAL)
+            await asyncio.sleep(ws_ping_interval)
             idle = time.monotonic() - last_client_msg
-            if idle > WS_PING_TIMEOUT:
+            if idle > ws_ping_timeout:
                 log.warning("WS TIMEOUT idle=%.1fs | rid=%s", idle, rid)
                 try:
                     await websocket.close(code=1001)
@@ -231,21 +259,28 @@ async def ws_joystick(websocket: WebSocket):
         asyncio.create_task(ping_loop()),
     ]
 
-    # hello
+    # приветствие
     try:
         await websocket.send_json(
             {
                 "type": "hello",
                 "rid": rid,
-                "ping_interval": WS_PING_INTERVAL,
-                "ping_timeout": WS_PING_TIMEOUT,
-                "max_rate_hz": WS_MAX_RATE_HZ,
+                "ping_interval": ws_ping_interval,
+                "ping_timeout": ws_ping_timeout,
+                "max_rate_hz": ws_max_rate_hz,
                 "estop": is_estopped(),
             }
         )
         # если уже активен E-STOP — сразу уведомим
         if is_estopped():
-            await websocket.send_json({"type": "error", "detail": "estop", "status": 423, "t": time.time()})
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "detail": "estop",
+                    "status": 423,
+                    "t": time.time(),
+                }
+            )
     except Exception:
         pass
 
