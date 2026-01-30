@@ -5,7 +5,6 @@ import os
 import sys
 import uuid
 import time
-from importlib import import_module, util as importlib_util
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
 
@@ -14,10 +13,9 @@ from fastapi import Request, Response
 from server.core.config import Settings
 from server.core.context import REQUEST_ID
 
-_inquirer_spec = importlib_util.find_spec("InquirerPy")
-if _inquirer_spec:
-    inquirer = import_module("InquirerPy").inquirer
-else:
+try:
+    from InquirerPy import inquirer
+except Exception:
     inquirer = None
 
 
