@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from server.api.deps import get_serial_mgr
 from server.serial.manager import SerialManager
@@ -7,9 +7,17 @@ router = APIRouter()
 
 
 @router.get("/health")
-async def health(request: Request, serial_mgr: SerialManager = Depends(get_serial_mgr)):
+async def health(
+    request: Request,
+    serial_mgr: SerialManager = Depends(get_serial_mgr),
+) -> dict[str, object]:
     try:
-        reply = await serial_mgr.send_cmd("PING", expect_prefixes_upper=["OK PONG"], max_wait_s=2.0, pre_drain_s=0.0)
+        reply = await serial_mgr.send_cmd(
+            "PING",
+            expect_prefixes_upper=["OK PONG"],
+            max_wait_s=2.0,
+            pre_drain_s=0.0,
+        )
         return {
             "ok": True,
             "arduino": reply,
@@ -17,5 +25,5 @@ async def health(request: Request, serial_mgr: SerialManager = Depends(get_seria
         }
     except HTTPException as e:
         return {"ok": False, "error": e.detail}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+    except Exception:
+        return {"ok": False, "error": "internal_error"}

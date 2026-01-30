@@ -6,7 +6,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, Dict
 
-# Можно прокинуть через env из CI/CD
+# Можно прокинуть через переменные окружения из CI/CD
 APP_VERSION = os.getenv("APP_VERSION", "0.0.0")
 GIT_SHA = os.getenv("GIT_SHA", "") or os.getenv("COMMIT_SHA", "")
 BUILD_TIME_UTC = os.getenv("BUILD_TIME_UTC", "")  # например 2026-01-27T12:00:00Z

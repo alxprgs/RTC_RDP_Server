@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from fastapi import Request, HTTPException
+from typing import Callable, Iterable, Optional, Set
 
-from server.serial.manager import SerialManager
+from fastapi import HTTPException, Request
+
 from server.core.config import Settings
-
-from typing import Iterable, Callable, Optional, Set, List
+from server.serial.manager import SerialManager
 
 def ensure_not_estopped(request: Request) -> None:
     estop = bool(getattr(request.app.state, "estop", False))
@@ -44,32 +44,36 @@ def get_serial_mgr(request: Request) -> SerialManager:
         raise HTTPException(status_code=503, detail="Serial not initialized yet")
     return mgr
 
-def ensure_supported_command(request: Request, command: str) -> None:
+
+def ensure_supported_command(request: Request, commands: Iterable[str]) -> None:
     """
     Если прошивка отдала список supported_commands, то строго проверяем.
     Если списка нет (старая прошивка) — НЕ блокируем.
     """
-    info = getattr(request.app.state, "device_info", None) or {}
-    cmds = info.get("supported_commands")
-    if not cmds:
+    cmds = _supported_commands_lower(request)
+    if cmds is None:
         return
 
-    cmd_norm = command.strip().lower()
-    cmds_norm = {str(c).strip().lower() for c in cmds}
-    if cmd_norm not in cmds_norm:
+    missing = [
+        cmd for cmd in commands if cmd and cmd.strip().lower() not in cmds
+    ]
+    if missing:
         raise HTTPException(
             status_code=501,
-            detail=f"Firmware does not support command: {command}",
+            detail=f"Firmware does not support command(s): {', '.join(missing)}",
         )
 
-def require_firmware_commands(required: List[str]) -> Callable:
+
+def require_firmware_commands(required: Iterable[str]) -> Callable[[Request], None]:
     """
     Usage:
       dependencies=[Depends(require_firmware_commands(["SetServo"]))]
 
     Обрати внимание: required -> list[str]
     """
+    required_commands = list(required)
+
     def _dep(request: Request) -> None:
-        ensure_supported_command(request, required)
+        ensure_supported_command(request, required_commands)
 
     return _dep

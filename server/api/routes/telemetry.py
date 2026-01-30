@@ -18,8 +18,13 @@ async def telemetry(
     arduino: bool = True,
     settings: Settings = Depends(get_settings),
     serial_mgr: SerialManager = Depends(get_serial_mgr),
-):
-    host = get_system_snapshot(settings=settings, include_disk=disk, include_network=net, include_sensors=sensors)
+) -> dict[str, object]:
+    host = get_system_snapshot(
+        settings=settings,
+        include_disk=disk,
+        include_network=net,
+        include_sensors=sensors,
+    )
 
     ard = None
     if arduino:
@@ -34,5 +39,7 @@ async def telemetry(
 
 
 @router.get("/telemetry/arduino")
-async def telemetry_arduino(serial_mgr: SerialManager = Depends(get_serial_mgr)):
+async def telemetry_arduino(
+    serial_mgr: SerialManager = Depends(get_serial_mgr),
+) -> dict[str, object]:
     return await get_arduino_telemetry_safe(serial_mgr)

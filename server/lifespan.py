@@ -1,22 +1,24 @@
-from __future__ import annotations
+import asyncio
+import time
 from contextlib import asynccontextmanager
+from importlib import import_module, util as importlib_util
+from typing import AsyncIterator, Callable
+
 from fastapi import FastAPI
 
 from server.core.config import Settings
 from server.core.logging_runtime import ensure_logging_config_on_boot
-from server.serial.ports import find_arduino_port, find_uart_port
-from server.serial.manager import SerialManager
-from server.services.servo_power import ensure_servo_power_mode_on_boot
+from server.core.update_checker import check_github_latest, should_refresh, status_to_dict
 from server.core.watchdog import start_watchdog, stop_watchdog
-
-import asyncio
-import time
-from server.core.update_checker import check_github_latest, status_to_dict, should_refresh
 from server.serial.device_probe import probe_device
+from server.serial.manager import SerialManager
+from server.serial.ports import find_arduino_port, find_uart_port
+from server.services.servo_power import ensure_servo_power_mode_on_boot
 
-try:
-    from InquirerPy import inquirer
-except ImportError:
+_inquirer_spec = importlib_util.find_spec("InquirerPy")
+if _inquirer_spec:
+    inquirer = import_module("InquirerPy").inquirer
+else:
     inquirer = None
 
 
@@ -25,21 +27,20 @@ async def choose_connection_type() -> str:
         connection_type = await inquirer.select(
             message="Выберите тип соединения",
             choices=["serial", "uart"],
-            default="serial"
+            default="serial",
         ).execute_async()
         return connection_type
-    else:
-        return "serial"
+    return "serial"
 
 
 async def get_connection_type(settings: Settings) -> str:
     """Определяет, какой тип соединения использовать: из конфигурации или через консоль."""
     if settings.connection_type:
         return settings.connection_type
-    else:
-        return await choose_connection_type()
+    return await choose_connection_type()
 
-async def _update_check_loop(app):
+
+async def _update_check_loop(app: FastAPI) -> None:
     s = app.state.settings
     while True:
         await asyncio.sleep(30)
@@ -62,28 +63,34 @@ async def _update_check_loop(app):
             # тихо: это не критично
             pass
 
-def build_lifespan(settings: Settings):
+
+def build_lifespan(settings: Settings) -> Callable[[FastAPI], AsyncIterator[None]]:
     @asynccontextmanager
-    async def lifespan(app: FastAPI):
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.settings = settings
         start_watchdog(app)
         # 1) применяем профиль логов / интерактивный выбор
         runtime = await ensure_logging_config_on_boot(settings)
         app.state.logging_runtime = runtime
 
-        # 2) выбираем порт (Serial или UART)
+        # 2) выбираем порт (последовательный или UART)
         connection_type = await get_connection_type(settings)
-        serial_port = None
-        if connection_type == 'serial':
+        serial_port: str | None = None
+        if connection_type == "serial":
             try:
                 serial_port = find_arduino_port()
             except Exception as e:
-                raise RuntimeError(f"Не удалось найти порт Arduino по serial: {e}.")
-        elif connection_type == 'uart':
+                raise RuntimeError(f"Не удалось найти порт Arduino по serial: {e}.") from e
+        elif connection_type == "uart":
             try:
                 serial_port = find_uart_port()
             except Exception as e:
-                raise RuntimeError(f"Не удалось найти порт по UART: {e}.")
+                raise RuntimeError(f"Не удалось найти порт по UART: {e}.") from e
+        else:
+            raise RuntimeError(f"Неизвестный тип соединения: {connection_type}")
+
+        if not serial_port:
+            raise RuntimeError("Не удалось определить сериал-порт для подключения.")
 
         app.state.serial_port = serial_port
 
@@ -101,7 +108,10 @@ def build_lifespan(settings: Settings):
 
         if app.state.settings.device_probe_on_startup:
             try:
-                app.state.device_info = await probe_device(app.state.serial_mgr, timeout_s=float(app.state.settings.device_probe_timeout_s))
+                app.state.device_info = await probe_device(
+                    app.state.serial_mgr,
+                    timeout_s=float(app.state.settings.device_probe_timeout_s),
+                )
             except Exception:
                 app.state.device_info = None
 
@@ -116,11 +126,11 @@ def build_lifespan(settings: Settings):
         finally:
             t = getattr(app.state, "update_task", None)
             try:
-                #1
+                # 1
                 serial_mgr.close()
-                #2
+                # 2
                 await stop_watchdog(app)
-                #3
+                # 3
                 if t:
                     t.cancel()
                     try:

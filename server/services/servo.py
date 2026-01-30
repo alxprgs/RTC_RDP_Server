@@ -136,7 +136,7 @@ async def set_servo_deg(
     await _rate_limit_or_fail(settings=settings, state=state, servo_id=servo_id, now=time.monotonic())
 
     line = f"SetServo {servo_id} {target}"
-    exp = infer_expect_prefixes_upper(line)  # -> OK SETSERVO
+    exp = infer_expect_prefixes_upper(line)  # ответ: OK SETSERVO
     reply = await serial_mgr.send_cmd(line, expect_prefixes_upper=exp, max_wait_s=3.5, pre_drain_s=0.0)
 
     now2 = time.monotonic()

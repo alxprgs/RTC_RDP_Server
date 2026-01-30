@@ -28,14 +28,14 @@ async def _try_servo_safe_pose(app: FastAPI, reason: str) -> bool:
     if bool(getattr(app.state, "estop", False)):
         return False
 
-    # строим safe pose из settings.servo_safe_pose / center
+    # строим безопасную позу из settings.servo_safe_pose / center
     lines = []
     for sid in range(1, int(s.servo_count) + 1):
         deg = int(s.servo_safe_pose.get(sid, s.servo_center_deg))
         lines.append(f"SetServo {sid} {deg}")
 
     try:
-        # mark_activity=False, чтобы watchdog не “кормил сам себя”
+        # mark_activity=False, чтобы сторожевой таймер не “кормил сам себя”
         await mgr.send_cmds(lines, max_wait_s_each=3.5, mark_activity=False)
         return True
     except Exception:
@@ -61,7 +61,7 @@ async def watchdog_loop(app: FastAPI) -> None:
 
         now = time.monotonic()
 
-        # --- MOTOR watchdog
+        # --- Сторожевой таймер моторов
         motor_idle = float(getattr(s, "watchdog_motor_idle_s", 0.0))
         if motor_idle > 0 and mgr.last_motor_ts > 0 and (now - mgr.last_motor_ts) >= motor_idle:
             if not motor_applied:

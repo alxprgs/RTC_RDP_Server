@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 
-from server.api.deps import ensure_not_estopped
+from server.api.deps import ensure_not_estopped, require_firmware_commands
 from server.schemas.servo import (
     ServoPowerIn,
     ServoPowerOut,
@@ -11,8 +11,13 @@ from server.schemas.servo import (
     ServoBatchIn,
     ServoBatchOut,
 )
-from server.services.servo import ServoRuntimeState, set_servo_deg, set_servo_batch, build_center_items
-from server.api.deps import ensure_not_estopped, require_firmware_commands
+from server.serial.manager import SerialManager
+from server.services.servo import (
+    ServoRuntimeState,
+    build_center_items,
+    set_servo_batch,
+    set_servo_deg,
+)
 
 router = APIRouter(tags=["servo"])
 
@@ -25,7 +30,7 @@ def _state(request: Request) -> ServoRuntimeState:
     return st
 
 
-def _serial(request: Request):
+def _serial(request: Request) -> SerialManager:
     mgr = getattr(request.app.state, "serial_mgr", None)
     if mgr is None:
         raise HTTPException(status_code=503, detail="Serial not initialized yet")
@@ -33,7 +38,7 @@ def _serial(request: Request):
 
 
 @router.get("/servo/capabilities")
-async def servo_capabilities(request: Request):
+async def servo_capabilities(request: Request) -> dict[str, object]:
     s = request.app.state.settings
     return {
         "servo_count": s.servo_count,
@@ -48,7 +53,7 @@ async def servo_capabilities(request: Request):
 
 
 @router.get("/servo/state")
-async def servo_state(request: Request):
+async def servo_state(request: Request) -> dict[str, object]:
     s = request.app.state.settings
     st = _state(request)
     return {
@@ -57,8 +62,19 @@ async def servo_state(request: Request):
     }
 
 
-@router.post("/servo/{servo_id}", response_model=ServoSetOut, dependencies=[Depends(ensure_not_estopped),Depends(require_firmware_commands(["SetServo"]))])
-async def servo_set(servo_id: int, data: ServoSetIn, request: Request):
+@router.post(
+    "/servo/{servo_id}",
+    response_model=ServoSetOut,
+    dependencies=[
+        Depends(ensure_not_estopped),
+        Depends(require_firmware_commands(["SetServo"])),
+    ],
+)
+async def servo_set(
+    servo_id: int,
+    data: ServoSetIn,
+    request: Request,
+) -> ServoSetOut:
     s = request.app.state.settings
     st = _state(request)
     mgr = _serial(request)
@@ -72,8 +88,18 @@ async def servo_set(servo_id: int, data: ServoSetIn, request: Request):
     )
 
 
-@router.post("/servo/batch", response_model=ServoBatchOut, dependencies=[Depends(ensure_not_estopped),Depends(require_firmware_commands(["SetServo"]))])
-async def servo_batch(data: ServoBatchIn, request: Request):
+@router.post(
+    "/servo/batch",
+    response_model=ServoBatchOut,
+    dependencies=[
+        Depends(ensure_not_estopped),
+        Depends(require_firmware_commands(["SetServo"])),
+    ],
+)
+async def servo_batch(
+    data: ServoBatchIn,
+    request: Request,
+) -> ServoBatchOut:
     s = request.app.state.settings
     st = _state(request)
     mgr = _serial(request)
@@ -83,8 +109,15 @@ async def servo_batch(data: ServoBatchIn, request: Request):
     return ServoBatchOut(items=outs)
 
 
-@router.post("/servo/center", response_model=ServoBatchOut, dependencies=[Depends(ensure_not_estopped),Depends(require_firmware_commands(["SetServo"]))])
-async def servo_center(request: Request):
+@router.post(
+    "/servo/center",
+    response_model=ServoBatchOut,
+    dependencies=[
+        Depends(ensure_not_estopped),
+        Depends(require_firmware_commands(["SetServo"])),
+    ],
+)
+async def servo_center(request: Request) -> ServoBatchOut:
     s = request.app.state.settings
     st = _state(request)
     mgr = _serial(request)
@@ -94,34 +127,44 @@ async def servo_center(request: Request):
     return ServoBatchOut(items=outs)
 
 
-# --- Backward-compatible shortcuts (раньше были A/B/All)
+# --- Шорткаты для обратной совместимости (раньше были A/B/All)
 @router.post("/servo/a", response_model=ServoSetOut, dependencies=[Depends(ensure_not_estopped)])
-async def servo_a(data: ServoSetIn, request: Request):
+async def servo_a(data: ServoSetIn, request: Request) -> ServoSetOut:
     return await servo_set(1, data, request)
 
 
 @router.post("/servo/b", response_model=ServoSetOut, dependencies=[Depends(ensure_not_estopped)])
-async def servo_b(data: ServoSetIn, request: Request):
+async def servo_b(data: ServoSetIn, request: Request) -> ServoSetOut:
     return await servo_set(2, data, request)
 
 
 @router.post("/servo/all", response_model=ServoBatchOut, dependencies=[Depends(ensure_not_estopped)])
-async def servo_all(data: ServoSetIn, request: Request):
+async def servo_all(data: ServoSetIn, request: Request) -> ServoBatchOut:
     s = request.app.state.settings
-    items = [(sid, data.deg) for sid in range(1, s.servo_count + 1)]
-    return await servo_batch(ServoBatchIn(items=[{"id": sid, "deg": data.deg} for sid in range(1, s.servo_count + 1)]), request)
+    items = [{"id": sid, "deg": data.deg} for sid in range(1, s.servo_count + 1)]
+    return await servo_batch(ServoBatchIn(items=items), request)
 
 
 @router.get("/servo/power")
-async def get_servo_power_mode(request: Request):
+async def get_servo_power_mode(request: Request) -> dict[str, object]:
     return {
         "mode": getattr(request.app.state, "servo_pwr_mode_active", None),
         "hint": "Set via POST /servo/power or env SERVO_PWR_MODE at boot",
     }
 
 
-@router.post("/servo/power", response_model=ServoPowerOut, dependencies=[Depends(ensure_not_estopped),Depends(require_firmware_commands(["SetServo"]))])
-async def set_servo_power_mode(data: ServoPowerIn, request: Request):
+@router.post(
+    "/servo/power",
+    response_model=ServoPowerOut,
+    dependencies=[
+        Depends(ensure_not_estopped),
+        Depends(require_firmware_commands(["SetServo"])),
+    ],
+)
+async def set_servo_power_mode(
+    data: ServoPowerIn,
+    request: Request,
+) -> ServoPowerOut:
     mgr = _serial(request)
 
     line = f"ServoPwr {data.mode}"

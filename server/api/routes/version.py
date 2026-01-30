@@ -14,13 +14,12 @@ router = APIRouter(tags=["version"])
 
 
 @router.get("/version")
-async def version(request: Request):
+async def version(request: Request) -> dict[str, object]:
     app = request.app
-    s = app.state.settings
 
     payload = {"server": server_version_payload()}
 
-    # cached update status
+    # закэшированный статус обновления
     st = getattr(app.state, "update_status", None)
     payload["update"] = st
 
@@ -28,7 +27,7 @@ async def version(request: Request):
 
 
 @router.post("/version/check")
-async def version_check(request: Request):
+async def version_check(request: Request) -> dict[str, object]:
     app = request.app
     s = app.state.settings
 

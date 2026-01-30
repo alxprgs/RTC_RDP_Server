@@ -1,22 +1,23 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import sys
 import uuid
 import time
+from importlib import import_module, util as importlib_util
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from fastapi import Request, Response
 
 from server.core.config import Settings
 from server.core.context import REQUEST_ID
 
-try:
-    from InquirerPy import inquirer
-except Exception:
+_inquirer_spec = importlib_util.find_spec("InquirerPy")
+if _inquirer_spec:
+    inquirer = import_module("InquirerPy").inquirer
+else:
     inquirer = None
 
 
@@ -224,7 +225,7 @@ async def ensure_logging_config_on_boot(settings: Settings) -> LoggingRuntime:
         )
         return runtime
 
-    # non-interactive fallback
+    # резервный режим для неинтерактивной среды
     runtime = LoggingRuntime(
         log_level=(settings.log_level or "INFO").upper(),
         log_request_body=bool(settings.log_request_body),
@@ -236,8 +237,11 @@ async def ensure_logging_config_on_boot(settings: Settings) -> LoggingRuntime:
     return runtime
 
 
-async def request_logging_middleware(request: Request, call_next):
-    # request-id
+async def request_logging_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    # идентификатор запроса
     rid = request.headers.get("x-request-id") or str(uuid.uuid4())
     token = REQUEST_ID.set(rid)
 
@@ -264,8 +268,12 @@ async def request_logging_middleware(request: Request, call_next):
         try:
             body_bytes = await request.body()
 
-            async def receive():
-                return {"type": "http.request", "body": body_bytes, "more_body": False}
+            async def receive() -> dict[str, Any]:
+                return {
+                    "type": "http.request",
+                    "body": body_bytes,
+                    "more_body": False,
+                }
 
             request._receive = receive  # type: ignore[attr-defined]
 

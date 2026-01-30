@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Sequence, Optional
+from typing import Any
 
 IGNORE_LINE_PREFIXES_UPPER: tuple[str, ...] = (
     "OK READY",
@@ -13,7 +13,7 @@ IGNORE_LINE_PREFIXES_UPPER: tuple[str, ...] = (
 
 
 class SerialProtocolError(RuntimeError):
-    def __init__(self, sent: str, reply: str):
+    def __init__(self: "SerialProtocolError", sent: str, reply: str) -> None:
         super().__init__(f"Arduino replied with error. sent={sent!r} reply={reply!r}")
         self.sent = sent
         self.reply = reply
@@ -44,7 +44,7 @@ def infer_expect_prefixes_upper(cmd_line: str) -> list[str]:
     if name in ("SETAENGINE", "SETBENGINE", "SETALLENGINE"):
         return [f"OK {name}"]
 
-    # --- NEW: servo multi
+    # --- Новое: мульти-серво
     if name == "SETSERVO":
         return ["OK SETSERVO"]
     if name == "SETSERVOS":
@@ -52,10 +52,10 @@ def infer_expect_prefixes_upper(cmd_line: str) -> list[str]:
     if name in ("SERVOCENTER", "SERVO_CENTER"):
         return ["OK SERVO_CENTER"]
 
-    # --- NEW: safety
+    # --- Новое: безопасность
     if name == "ESTOP":
         return ["OK ESTOP"]
-    
+
     if name == "CAPS":
         return ["OK CAPS"]
     if name in ("FWVER", "VERSION", "VER"):
@@ -64,8 +64,7 @@ def infer_expect_prefixes_upper(cmd_line: str) -> list[str]:
     return ["OK"]
 
 
-
-def parse_arduino_telem_reply(reply: str) -> dict:
+def parse_arduino_telem_reply(reply: str) -> dict[str, Any]:
     s = (reply or "").strip()
     up = s.upper()
 
