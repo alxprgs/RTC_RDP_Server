@@ -11,7 +11,7 @@ router = APIRouter(tags=["joystick"])
 
 
 async def joystick_body_supported(data: JoystickIn, request: Request) -> JoystickIn:
-    ensure_supported_command(request, ("SetAEngine", "SetBEngine"))
+    ensure_supported_command(request, ("SetAEngine", "SetBEngine", "SetCEngine", "SetDEngine"))
     return data
 
 
@@ -21,21 +21,23 @@ async def joystick_body_supported(data: JoystickIn, request: Request) -> Joystic
     dependencies=[Depends(ensure_not_estopped)],
 )
 async def joystick(
-    request: Request,
-    data: JoystickIn = Depends(joystick_body_supported),
-    serial_mgr: SerialManager = Depends(get_serial_mgr),
+        request: Request,
+        data: JoystickIn = Depends(joystick_body_supported),
+        serial_mgr: SerialManager = Depends(get_serial_mgr),
 ) -> JoystickOut:
     if is_dev_mode(request):
         return JoystickOut(
             motor_a=0,
             motor_b=0,
+            motor_c=0,
+            motor_d=0,
             raw_x=data.x,
             raw_y=data.y,
             input=data,
             sent=["DEV MODE"],
             replies=["OK DEV"],
         )
-    
+
     try:
         return await process_joystick(serial_mgr, data)
     except SerialProtocolError as e:
