@@ -38,7 +38,16 @@ def get_settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
+def is_dev_mode(request: Request) -> bool:
+    """Проверяет, запущен ли сервер в dev-режиме"""
+    device_info = getattr(request.app.state, "device_info", None) or {}
+    return device_info.get("mode") == "dev"
+
+
 def get_serial_mgr(request: Request) -> SerialManager:
+    if is_dev_mode(request):
+        return None
+    
     mgr = getattr(request.app.state, "serial_mgr", None)
     if mgr is None:
         raise HTTPException(status_code=503, detail="Serial not initialized yet")
@@ -49,7 +58,11 @@ def ensure_supported_command(request: Request, commands: Iterable[str]) -> None:
     """
     Если прошивка отдала список supported_commands, то строго проверяем.
     Если списка нет (старая прошивка) — НЕ блокируем.
+    В dev-режиме всегда пропускаем.
     """
+    if is_dev_mode(request):
+        return
+    
     cmds = _supported_commands_lower(request)
     if cmds is None:
         return

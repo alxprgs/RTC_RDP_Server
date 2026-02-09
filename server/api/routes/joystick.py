@@ -1,7 +1,7 @@
 import serial
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from server.api.deps import ensure_not_estopped, ensure_supported_command, get_serial_mgr
+from server.api.deps import ensure_not_estopped, ensure_supported_command, get_serial_mgr, is_dev_mode
 from server.serial.manager import SerialManager
 from server.serial.protocol import SerialProtocolError
 from server.schemas.joystick import JoystickIn, JoystickOut
@@ -21,9 +21,21 @@ async def joystick_body_supported(data: JoystickIn, request: Request) -> Joystic
     dependencies=[Depends(ensure_not_estopped)],
 )
 async def joystick(
+    request: Request,
     data: JoystickIn = Depends(joystick_body_supported),
     serial_mgr: SerialManager = Depends(get_serial_mgr),
 ) -> JoystickOut:
+    if is_dev_mode(request):
+        return JoystickOut(
+            motor_a=0,
+            motor_b=0,
+            raw_x=data.x,
+            raw_y=data.y,
+            input=data,
+            sent=["DEV MODE"],
+            replies=["OK DEV"],
+        )
+    
     try:
         return await process_joystick(serial_mgr, data)
     except SerialProtocolError as e:

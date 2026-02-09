@@ -9,8 +9,10 @@ class JoystickIn(BaseModel):
 
 
 class JoystickOut(BaseModel):
-    input: dict
+    input: JoystickIn
     motor_a: int
     motor_b: int
+    raw_x: int = Field(default=0, description="Raw X value before processing")
+    raw_y: int = Field(default=0, description="Raw Y value before processing")
     sent: list[str]
     replies: list[str]

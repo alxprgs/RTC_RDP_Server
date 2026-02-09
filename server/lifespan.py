@@ -26,7 +26,7 @@ async def choose_connection_type() -> str:
     if inquirer:
         connection_type = await inquirer.select(
             message="Выберите тип соединения",
-            choices=["serial", "uart"],
+            choices=["serial", "uart", "dev"],
             default="serial",
         ).execute_async()
         return connection_type
@@ -34,7 +34,6 @@ async def choose_connection_type() -> str:
 
 
 async def get_connection_type(settings: Settings) -> str:
-    """Определяет, какой тип соединения использовать: из конфигурации или через консоль."""
     if settings.connection_type:
         return settings.connection_type
     return await choose_connection_type()
@@ -60,7 +59,6 @@ async def _update_check_loop(app: FastAPI) -> None:
             app.state.update_status = status_to_dict(st)
             app.state.update_last_checked_ts = time.time()
         except Exception:
-            # тихо: это не критично
             pass
 
 
@@ -69,13 +67,38 @@ def build_lifespan(settings: Settings) -> Callable[[FastAPI], AsyncIterator[None
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.settings = settings
         start_watchdog(app)
-        # 1) применяем профиль логов / интерактивный выбор
         runtime = await ensure_logging_config_on_boot(settings)
         app.state.logging_runtime = runtime
 
-        # 2) выбираем порт (последовательный или UART)
         connection_type = await get_connection_type(settings)
         serial_port: str | None = None
+        
+        if connection_type == "dev":
+            app.state.serial_port = None
+            app.state.serial_mgr = None
+            app.state.device_info = {"mode": "dev", "mock": True}
+            app.state.servo_pwr_mode_active = None
+            app.state.update_status = None
+            app.state.update_last_checked_ts = None
+            app.state.update_task = asyncio.create_task(_update_check_loop(app))
+            
+            try:
+                yield
+            finally:
+                t = getattr(app.state, "update_task", None)
+                try:
+                    await stop_watchdog(app)
+                    if t:
+                        t.cancel()
+                        try:
+                            await t
+                        except asyncio.CancelledError:
+                            pass
+                except Exception:
+                    pass
+            return
+        
+        # Обычные режимы: serial или uart
         if connection_type == "serial":
             try:
                 serial_port = find_arduino_port()

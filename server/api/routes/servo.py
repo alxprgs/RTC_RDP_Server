@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from server.api.deps import ensure_not_estopped, require_firmware_commands
+from server.api.deps import ensure_not_estopped, require_firmware_commands, is_dev_mode
 from server.schemas.servo import (
     ServoPowerIn,
     ServoPowerOut,
@@ -10,6 +10,7 @@ from server.schemas.servo import (
     ServoSetOut,
     ServoBatchIn,
     ServoBatchOut,
+    ServoBatchItem,
 )
 from server.serial.manager import SerialManager
 from server.services.servo import (
@@ -31,6 +32,9 @@ def _state(request: Request) -> ServoRuntimeState:
 
 
 def _serial(request: Request) -> SerialManager:
+    if is_dev_mode(request):
+        return None
+    
     mgr = getattr(request.app.state, "serial_mgr", None)
     if mgr is None:
         raise HTTPException(status_code=503, detail="Serial not initialized yet")
@@ -79,6 +83,16 @@ async def servo_set(
     st = _state(request)
     mgr = _serial(request)
 
+    # Dev-режим: возвращаем моковый ответ
+    if is_dev_mode(request):
+        return ServoSetOut(
+            id=servo_id,
+            requested_deg=data.deg,
+            applied_deg=data.deg,
+            sent=f"DEV MODE: SetServo {servo_id} {data.deg}",
+            reply="OK DEV",
+        )
+
     return await set_servo_deg(
         settings=s,
         state=st,
@@ -104,6 +118,20 @@ async def servo_batch(
     st = _state(request)
     mgr = _serial(request)
 
+    # Dev-режим: возвращаем моковые ответы
+    if is_dev_mode(request):
+        mock_items = [
+            ServoSetOut(
+                id=item.id,
+                requested_deg=item.deg,
+                applied_deg=item.deg,
+                sent=f"DEV MODE: SetServo {item.id} {item.deg}",
+                reply="OK DEV",
+            )
+            for item in data.items
+        ]
+        return ServoBatchOut(items=mock_items)
+
     items = [(i.id, i.deg) for i in data.items]
     outs = await set_servo_batch(settings=s, state=st, serial_mgr=mgr, items=items)
     return ServoBatchOut(items=outs)
@@ -121,6 +149,20 @@ async def servo_center(request: Request) -> ServoBatchOut:
     s = request.app.state.settings
     st = _state(request)
     mgr = _serial(request)
+
+    # Dev-режим: возвращаем моковые ответы для центрирования
+    if is_dev_mode(request):
+        mock_items = [
+            ServoSetOut(
+                id=sid,
+                requested_deg=s.servo_center_deg,
+                applied_deg=s.servo_center_deg,
+                sent=f"DEV MODE: SetServo {sid} {s.servo_center_deg}",
+                reply="OK DEV",
+            )
+            for sid in range(1, s.servo_count + 1)
+        ]
+        return ServoBatchOut(items=mock_items)
 
     items = build_center_items(s)
     outs = await set_servo_batch(settings=s, state=st, serial_mgr=mgr, items=items)
@@ -141,7 +183,7 @@ async def servo_b(data: ServoSetIn, request: Request) -> ServoSetOut:
 @router.post("/servo/all", response_model=ServoBatchOut, dependencies=[Depends(ensure_not_estopped)])
 async def servo_all(data: ServoSetIn, request: Request) -> ServoBatchOut:
     s = request.app.state.settings
-    items = [{"id": sid, "deg": data.deg} for sid in range(1, s.servo_count + 1)]
+    items = [ServoBatchItem(id=sid, deg=data.deg) for sid in range(1, s.servo_count + 1)]
     return await servo_batch(ServoBatchIn(items=items), request)
 
 
@@ -166,6 +208,14 @@ async def set_servo_power_mode(
     request: Request,
 ) -> ServoPowerOut:
     mgr = _serial(request)
+
+    if is_dev_mode(request):
+        request.app.state.servo_pwr_mode_active = data.mode
+        return ServoPowerOut(
+            mode=data.mode,
+            sent=f"DEV MODE: ServoPwr {data.mode}",
+            reply="OK DEV",
+        )
 
     line = f"ServoPwr {data.mode}"
     reply = await mgr.send_cmd(

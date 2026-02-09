@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from server.api.deps import get_serial_mgr
+from server.api.deps import get_serial_mgr, is_dev_mode
 from server.serial.manager import SerialManager
 
 router = APIRouter()
@@ -11,6 +11,14 @@ async def health(
     request: Request,
     serial_mgr: SerialManager = Depends(get_serial_mgr),
 ) -> dict[str, object]:
+    if is_dev_mode(request):
+        return {
+            "ok": True,
+            "mode": "dev",
+            "arduino": "DEV MODE - No hardware connection",
+            "servo_pwr": None,
+        }
+    
     try:
         reply = await serial_mgr.send_cmd(
             "PING",
