@@ -124,7 +124,7 @@ class SerialManager:
     def _readline_buffered_sync(
         self: "SerialManager",
         deadline: float,
-        max_line: int = 256,
+        max_line: int = 2048,
     ) -> str:
         if not self._ser:
             raise RuntimeError("Serial not connected")
