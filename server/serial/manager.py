@@ -145,10 +145,6 @@ class SerialManager:
                 if len(self._rx_buf) > 4096:
                     self._rx_buf = self._rx_buf[-1024:]
 
-            if len(self._rx_buf) > 16384:
-                self._rx_buf.clear()
-                return "ERR LineTooLong"
-
         return ""
 
     def _drain_lines_sync(
