@@ -12,18 +12,8 @@ async def process_joystick(serial_mgr: SerialManager, data: JoystickIn) -> Joyst
     x = int(round(x * data.scale))
     y = int(round(y * data.scale))
 
-    a, b = mix_tank(x, y)
-
-    # Конфигурация "солнца":
-    # Мотор A: передний правый
-    # Мотор B: задний левый  (пара AB - одна диагональ)
-    # Мотор C: передний левый
-    # Мотор D: задний правый (пара CD - другая диагональ)
-
-    lines = []
-
-    if data.motor_pair == "AB":
-        # Используем диагональ A-B, C-D отключены
+    if data.z > data.y:
+        a, b = mix_tank(x, y)
         c, d = 0, 0
         lines = [
             f"SetAEngine {a}",
@@ -31,9 +21,7 @@ async def process_joystick(serial_mgr: SerialManager, data: JoystickIn) -> Joyst
             f"SetCEngine 0",
             f"SetDEngine 0"
         ]
-    else:  # "CD"
-        # Используем диагональ C-D, A-B отключены
-        # Для C-D: поворот инвертируется (C = левый, D = правый)
+    else:  # data.z <= data.y
         c, d = mix_tank(-x, y)
         a, b = 0, 0
         lines = [
@@ -42,7 +30,6 @@ async def process_joystick(serial_mgr: SerialManager, data: JoystickIn) -> Joyst
             f"SetCEngine {c}",
             f"SetDEngine {d}"
         ]
-
 
     replies = await serial_mgr.send_cmds(lines, max_wait_s_each=2.5)
 
