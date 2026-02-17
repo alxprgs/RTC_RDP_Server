@@ -41,12 +41,16 @@ async def joystick(
     try:
         return await process_joystick(serial_mgr, data)
     except SerialProtocolError as e:
+        print(f"Protocol error processing joystick input: {e}")
         raise HTTPException(status_code=400, detail=str(e)) from e
     except TimeoutError as e:
+        print(f"Timeout processing joystick input: {e}")
         raise HTTPException(status_code=504, detail=str(e)) from e
     except serial.SerialException as e:
+        print(f"Unexpected error processing joystick input: {e}")
         raise HTTPException(status_code=503, detail="Serial error") from e
     except HTTPException:
         raise
     except Exception as e:
+        print(f"Error processing joystick input: {e}")
         raise HTTPException(status_code=500, detail="Internal server error") from e
