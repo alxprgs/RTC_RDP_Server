@@ -12,7 +12,7 @@ async def process_joystick(serial_mgr: SerialManager, data: JoystickIn) -> Joyst
     x = int(round(x * data.scale))
     y = int(round(y * data.scale))
 
-    if data.x > data.y:
+    if abs(data.x) > abs(data.y):
         a, b = mix_tank(x, y)
         c, d = 0, 0
         lines = [
