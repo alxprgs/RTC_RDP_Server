@@ -11,6 +11,7 @@ from server.api.routes.ws_joystick import router as ws_joystick_router
 from server.api.routes.safety import router as safety_router
 from server.api.routes.version import router as version_router
 from server.api.routes.device import router as device_router
+from server.api.routes.encoders import router as encoders_router  # <-- ДОБАВИТЬ ЭТОТ ИМПОРТ
 
 
 def include_routers(app: FastAPI) -> None:
@@ -25,3 +26,4 @@ def include_routers(app: FastAPI) -> None:
     app.include_router(ws_joystick_router)
     app.include_router(version_router)
     app.include_router(device_router)
+    app.include_router(encoders_router)  # <-- ДОБАВИТЬ ЭТУ СТРОКУ
