@@ -72,7 +72,7 @@ async def ws_joystick(websocket: WebSocket) -> None:
     ws_max_rate_hz = float(getattr(settings, "ws_max_rate_hz", 30.0))
     ws_stop_on_close = bool(getattr(settings, "ws_stop_on_close", True))
 
-    if not _ws_require(app, ("SetAEngine", "SetBEngine")):
+    if not _ws_require(app, ("SetAEngine", "SetBEngine", "SetCEngine", "SetDEngine")):
         await websocket.accept()
         await websocket.send_json(
             {
@@ -100,7 +100,10 @@ async def ws_joystick(websocket: WebSocket) -> None:
             return
         try:
             log.info("WS SAFE STOP (%s) | rid=%s", reason, rid)
-            await mgr.send_cmds(["SetAEngine 0", "SetBEngine 0"], max_wait_s_each=2.0)
+            await mgr.send_cmds(
+                ["SetAEngine 0", "SetBEngine 0", "SetCEngine 0", "SetDEngine 0"],
+                max_wait_s_each=2.0,
+            )
         except Exception as e:
             log.warning("WS SAFE STOP FAILED (%s) | rid=%s | err=%s", reason, rid, repr(e))
 
@@ -219,6 +222,8 @@ async def ws_joystick(websocket: WebSocket) -> None:
                             "seq": sent_seq,
                             "motor_a": out.motor_a,
                             "motor_b": out.motor_b,
+                            "motor_c": out.motor_c,
+                            "motor_d": out.motor_d,
                             "sent": out.sent,
                             "replies": out.replies,
                             "t": time.time(),
