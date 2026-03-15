@@ -21,6 +21,18 @@ serial_log = logging.getLogger("motor-bridge.serial")
 
 
 class SerialManager:
+    _instance: Optional[SerialManager] = None  # <-- ДОБАВИТЬ
+    
+    @classmethod
+    def get_instance(cls) -> Optional[SerialManager]:  # <-- ДОБАВИТЬ
+        """Получить экземпляр синглтона"""
+        return cls._instance
+    
+    @classmethod
+    def set_instance(cls, instance: SerialManager) -> None:  # <-- ДОБАВИТЬ
+        """Установить экземпляр синглтона"""
+        cls._instance = instance
+    
     def __init__(
         self: "SerialManager",
         port: str,
